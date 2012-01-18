@@ -75,15 +75,15 @@
 		<!-- INTEGRATION TEST -->
 		<!-- IT - SPRING, SPRING EXT -->
 		<dependency>
-			<groupId>org.springframework</groupId>
+			<groupId>org.springframework.amqp</groupId>
 			<artifactId>spring-rabbit</artifactId>
-			<version>1.0.0-SNAPSHOT</version>
+			<version>1.0.0.RELEASE</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-test</artifactId>
-			<version>3.0.2.RELEASE</version>
+			<version>3.1.0.RELEASE</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
@@ -121,6 +121,7 @@
 							<skip>false</skip>
 							<excludes>
 								<exclude>**/*IntegrationTest.java</exclude>
+								<exclude>**/Test*.java</exclude>
 							</excludes>
 						</configuration>
 					</execution>
@@ -135,6 +136,9 @@
 							<includes>
 								<include>**/*IntegrationTest.java</include>
 							</includes>
+							<excludes>
+								<exclude>**/Test*.java</exclude>
+							</excludes>
 						</configuration>
 					</execution>
 				</executions>

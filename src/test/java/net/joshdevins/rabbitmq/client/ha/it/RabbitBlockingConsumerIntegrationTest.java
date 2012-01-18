@@ -64,7 +64,7 @@ public class RabbitBlockingConsumerIntegrationTest {
         // setup async container
         SimpleMessageListenerContainer container = new SimpleMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
-        container.setQueueName("testQueue");
+        container.setQueueNames("testQueue");
         container.setConcurrentConsumers(5);
         // container.setChannelTransacted(true);
 
