@@ -10,12 +10,11 @@
 
     <bean id="connectionFactory" class="org.springframework.amqp.rabbit.connection.CachingConnectionFactory">
         <constructor-arg ref="haConnectionFactory" />
-        <constructor-arg value="devins-ubuntu-vm01" />
     </bean>
 
     <bean id="rabbitMqTemplate" class="org.springframework.amqp.rabbit.core.RabbitTemplate">
         <constructor-arg ref="connectionFactory" />
-        <property name="defaultExchange" value="amq.topic" />
+        <property name="exchange" value="amq.topic" />
     </bean>
 
 </beans>

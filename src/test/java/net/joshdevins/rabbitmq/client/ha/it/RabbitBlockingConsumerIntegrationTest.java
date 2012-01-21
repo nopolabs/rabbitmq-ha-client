@@ -1,6 +1,7 @@
 package net.joshdevins.rabbitmq.client.ha.it;
 
 import net.joshdevins.rabbitmq.client.ha.HaConnectionFactory;
+import net.joshdevins.rabbitmq.client.ha.HaConnectionListener;
 
 import org.apache.log4j.Logger;
 import org.junit.Assert;
@@ -16,6 +17,7 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
 import com.rabbitmq.client.AMQP.Queue.BindOk;
+import com.rabbitmq.client.Address;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("/META-INF/spring/applicationContext.xml")
@@ -49,14 +51,15 @@ public class RabbitBlockingConsumerIntegrationTest {
 
     @Before
     public void before() {
-
         // add my connection listener to the HaConnectionFactory
-        haConnectionFactory.addHaConnectionListener(new TestHaConnectionListener(haConnectionFactory,
-                "devins-ubuntu-vm01"));
+        Address[] addresses = new Address[] { new Address("localhost") };
+        HaConnectionListener listener = new TestHaConnectionListener(haConnectionFactory, addresses);
+        haConnectionFactory.addHaConnectionListener(listener);
     }
 
     @Test
     public void testAsyncConsume() throws InterruptedException {
+        LOG.warn("testAsyncConsume enter");
 
         BindOk bindOk = template.execute(new TestChannelCallback());
         Assert.assertNotNull(bindOk);
@@ -75,6 +78,7 @@ public class RabbitBlockingConsumerIntegrationTest {
         container.start();
 
         while (true) {
+            LOG.warn("testAsyncConsume sleeping");
             Thread.sleep(10000);
         }
 

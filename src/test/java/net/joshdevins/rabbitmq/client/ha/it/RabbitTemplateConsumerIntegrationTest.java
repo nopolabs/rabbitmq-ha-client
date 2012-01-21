@@ -32,6 +32,7 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
 import com.rabbitmq.client.AMQP.Queue.BindOk;
+import com.rabbitmq.client.Address;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("/META-INF/spring/applicationContext.xml")
@@ -47,10 +48,9 @@ public class RabbitTemplateConsumerIntegrationTest {
 
     @Before
     public void before() {
-
         // add my connection listener to the HaConnectionFactory
-        haConnectionFactory.addHaConnectionListener(new TestHaConnectionListener(haConnectionFactory,
-                "devins-ubuntu-vm01"));
+        Address[] addresses = new Address[] { new Address("localhost") };
+        haConnectionFactory.addHaConnectionListener(new TestHaConnectionListener(haConnectionFactory, addresses));
     }
 
     @Test

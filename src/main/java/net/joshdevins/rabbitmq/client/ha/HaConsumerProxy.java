@@ -110,4 +110,12 @@ public class HaConsumerProxy implements Consumer {
         // this is it?
         executor.submit(new ConsumeRunner());
     }
+
+    public void handleCancel(final String consumerTag) throws IOException {
+        target.handleCancel(consumerTag);
+    }
+
+    public void handleRecoverOk() {
+        target.handleRecoverOk();
+    }
 }

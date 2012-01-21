@@ -1,5 +1,7 @@
 package net.joshdevins.rabbitmq.client.ha.it;
 
+import java.util.HashMap;
+
 import org.springframework.amqp.rabbit.core.ChannelCallback;
 
 import com.rabbitmq.client.Channel;
@@ -17,7 +19,7 @@ public class TestChannelCallback implements ChannelCallback<BindOk> {
     public BindOk doInRabbit(final Channel channel) throws Exception {
 
         // bind to the default topic and consume all messages
-        channel.queueDeclare("testQueue", true);
+        channel.queueDeclare("testQueue", true, true, true, new HashMap<String,Object>());
         return channel.queueBind("testQueue", "amq.topic", "#");
     }
 }
