@@ -115,7 +115,7 @@ public class HaConsumerProxy implements Consumer {
         target.handleCancel(consumerTag);
     }
 
-    public void handleRecoverOk() {
-        target.handleRecoverOk();
+    public void handleRecoverOk(final String consumerTag) {
+        target.handleRecoverOk(consumerTag);
     }
 }
