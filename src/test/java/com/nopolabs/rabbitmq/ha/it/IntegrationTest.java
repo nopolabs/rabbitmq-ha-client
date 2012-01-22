@@ -7,6 +7,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 
 import net.joshdevins.rabbitmq.client.ha.HaConnectionFactory;
+import net.joshdevins.rabbitmq.client.ha.retry.AlwaysRetryStrategy;
 
 import org.apache.log4j.Logger;
 import org.junit.After;
@@ -42,8 +43,8 @@ public class IntegrationTest {
 		for (int i = 0; i < 10000; i++) {
 			String msg = "msg-" + i;
 			channel.basicPublish(TEST_EXCHANGE, TEST_ROUTING_KEY, null, msg.getBytes());
-			if (i % 3000 == 0) {
-				
+			if (i == 9000) {
+				tracerServer.breakConnection();
 			}
 		}
 		
@@ -72,6 +73,7 @@ public class IntegrationTest {
 		tracerServer.startup();
 		
 	    haFactory = new HaConnectionFactory();
+	    haFactory.setRetryStrategy(new AlwaysRetryStrategy());
 		factory = haFactory;
 		factory.setHost("localhost");
 		factory.setPort(TRACER_PORT);
@@ -150,19 +152,26 @@ public class IntegrationTest {
 			throw new RuntimeException("Could not find constructor: Tracer(Socket sock, String id, String host, int port, Logger logger)");
 		}
 
-		Tracer createTracer(Socket socket, String id) throws IllegalArgumentException, InstantiationException, IllegalAccessException, InvocationTargetException {
-			return tracerConstructor.newInstance(socket, id, connectHost, connectPort, logger);		
+		private void trace(Socket socket, String id) throws Exception {
+			Tracer tracer = tracerConstructor.newInstance(socket, id, connectHost, connectPort, logger);	
+			Thread thread = new Thread(tracer);
+			thread.start();
+            LOG.info(id + " started");
+//            thread.join();
+            LOG.info(id + " finished");
 		}
 		
-		// this is funky, it is based on the premise that there will only be one client using the server
-        void breakConnection() {
-    		try {
-				socket.close();
-			} catch (IOException e) {
-				e.printStackTrace();
+		void breakConnection() {
+			if (socket != null) {
+				try {
+					socket.close();
+					socket = null;
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 			}
-    	}
-
+		}
+		
 		void startup() {
 	    	logger = new Tracer.AsyncLogger(System.out);
 	    	logger.start();
@@ -175,9 +184,7 @@ public class IntegrationTest {
 	    	            while (true) {
 	    	            	socket = server.accept();
 	    	            	String id = "Tracer-" + (counter++);
-	    	                Tracer tracer = createTracer(socket, id);
-	    	                LOG.info("starting " + id);
-	    	                new Thread(tracer).start();
+	    	                trace(socket, id);
 	    	            }
 	    	        } catch (Exception e) {
 	    	            e.printStackTrace();
