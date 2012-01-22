@@ -1,17 +1,17 @@
 package com.nopolabs.rabbitmq.ha.it;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 import net.joshdevins.rabbitmq.client.ha.HaConnectionFactory;
 
+import org.apache.log4j.Logger;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
-import Tracer.AsyncLogger;
-import Tracer.Logger;
 
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
@@ -20,78 +20,120 @@ import com.rabbitmq.tools.Tracer;
 
 public class IntegrationTest {
 	
-	private static final int TRACER_PORT = 5673;
-	private static final String RABBIT_HOST = "localhost";
-	private static final int RABBIT_PORT = 5672;
+    private static final Logger LOG = Logger.getLogger(IntegrationTest.class);
+
+    private static final int TRACER_PORT = 5673;
+	private static final String AMQP_HOST = ConnectionFactory.DEFAULT_HOST;
+	private static final int AMQP_PORT = ConnectionFactory.DEFAULT_AMQP_PORT;
 	
 	private static final String TEST_EXCHANGE = "TEST-exchange";
 	private static final String TEST_QUEUE = "TEST-queue";
 	private static final String TEST_ROUTING_KEY = "TEST-routingKey";
 	
-	private TracerThreadFactory tracerThreadFactory;
-	private Thread tracerThread;
+	private TracerServer tracerServer;
 	private HaConnectionFactory haFactory;
 	private ConnectionFactory factory;
 	
 	@Test
-	public void publisherTest() {
+	public void publisherTest() throws IOException {
 		Connection connection = factory.newConnection();
 		Channel channel = connection.createChannel();
 		
-		declareAndBindExchangeAndQueue(channel, TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
-		
-		byte[] messageBodyBytes = "Hello, world!".getBytes();
-		channel.basicPublish(TEST_EXCHANGE, TEST_ROUTING_KEY, null, messageBodyBytes);
+		for (int i = 0; i < 10000; i++) {
+			String msg = "msg-" + i;
+			channel.basicPublish(TEST_EXCHANGE, TEST_ROUTING_KEY, null, msg.getBytes());
+			if (i % 3000 == 0) {
+				
+			}
+		}
 		
 		channel.close();
 		connection.close();
 	}
 	
-	@Test
-	public void consumerTest() {
-		
-	}
-	
-	@Test
-	public void publisherClusterTest() {
-		factory.newConnection();
-	}
-	
-	@Test
-	public void consumerClusterTest() {
-		
-	}
+//	@Test
+//	public void consumerTest() {
+//		
+//	}
+//	
+//	@Test
+//	public void publisherClusterTest() {
+//
+//	}
+//	
+//	@Test
+//	public void consumerClusterTest() {
+//		
+//	}
 	
 	@Before 
-	public void setUp() {
-		tracerThreadFactory = new TracerThreadFactory();
-		tracerThread = tracerThreadFactory.createTracerThread(TRACER_PORT, RABBIT_HOST, RABBIT_PORT);
-		tracerThread.start();
+	public void setup() throws IOException, ClassNotFoundException {
+		tracerServer = new TracerServer(TRACER_PORT, AMQP_HOST, AMQP_PORT);
+		tracerServer.startup();
 		
 	    haFactory = new HaConnectionFactory();
 		factory = haFactory;
-		factory.setHost(RABBIT_HOST);
-		factory.setPort(RABBIT_PORT);
+		factory.setHost("localhost");
+		factory.setPort(TRACER_PORT);
+		
+		teardownQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
+		setupQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
 	}
 	
 	@After
-	public void tearDown() {
-		tracerThread.interrupt();
+	public void teardown() throws IOException, InterruptedException {
+		Thread.sleep(500);
+		tracerServer.shutdown();
+//		teardownQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
+		Thread.sleep(500);
 	}
 	
-	private void declareAndBindExchangeAndQueue(Channel channel, String exchangeName, String queueName, String routingKey) {
+	private void setupQueue(String exchangeName, String queueName, String routingKey) throws IOException {
+		ConnectionFactory connectionFactory = new ConnectionFactory();		
+		Connection connection = connectionFactory.newConnection();
+		Channel channel = connection.createChannel();
+
 		channel.exchangeDeclare(exchangeName, "direct", true);
 		channel.queueDeclare(queueName, true, false, false, null);
 		channel.queueBind(queueName, exchangeName, routingKey);
+		
+		channel.close();
+		connection.close();
 	}
 	
-	class TracerThreadFactory {
+	private void teardownQueue(String exchangeName, String queueName, String routingKey) throws IOException {
+		ConnectionFactory connectionFactory = new ConnectionFactory();		
+		Connection connection = connectionFactory.newConnection();
+		Channel channel = connection.createChannel();
+
+		try {
+			channel.queueUnbind(queueName, exchangeName, routingKey);
+			channel.queueDelete(queueName);
+			channel.exchangeDelete(exchangeName);
+			channel.close();
+		} catch (IOException e) {
+			LOG.warn("error trying to teardown queue", e);
+		}
+		
+		connection.close();
+	}
+	
+	class TracerServer {
 		
 		private Constructor<Tracer> tracerConstructor;
+		private int listenPort;
+		private String connectHost;
+		private int connectPort;
+		private Thread thread;
+		private Tracer.Logger logger;
+		private Socket socket;
 		
-		TracerThreadFactory() {
-			Class<Tracer> cls = (Class<Tracer>)Class.forName("org.rabbitmq.tools.Tracer");
-			Constructor<Tracer> ctors[] = (Constructor<Tracer>)cls.getDeclaredConstructors();
+		TracerServer(int listenPort, String connectHost, int connectPort) throws ClassNotFoundException {
+			this.listenPort = listenPort;
+			this.connectHost = connectHost;
+			this.connectPort = connectPort;
+			Class<Tracer> cls = (Class<Tracer>)Class.forName("com.rabbitmq.tools.Tracer");
+			Constructor<Tracer> ctors[] = (Constructor<Tracer>[])cls.getDeclaredConstructors();
 			for (Constructor<Tracer> ctor : ctors) {
 				Class pTypes[] = ctor.getParameterTypes();
 				if (pTypes.length == 5
@@ -107,48 +149,48 @@ public class IntegrationTest {
 			}
 			throw new RuntimeException("Could not find constructor: Tracer(Socket sock, String id, String host, int port, Logger logger)");
 		}
-		
-	    Thread createTracerThread(final int listenPort, final String connectHost, final int connectPort) {
-			
-	        return new Thread() {
-	        	
-	        	private Tracer.Logger logger = new Tracer.AsyncLogger(System.out); // initially stopped
-	        	private Thread tracerThread;
 
+		Tracer createTracer(Socket socket, String id) throws IllegalArgumentException, InstantiationException, IllegalAccessException, InvocationTargetException {
+			return tracerConstructor.newInstance(socket, id, connectHost, connectPort, logger);		
+		}
+		
+		// this is funky, it is based on the premise that there will only be one client using the server
+        void breakConnection() {
+    		try {
+				socket.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+    	}
+
+		void startup() {
+	    	logger = new Tracer.AsyncLogger(System.out);
+	    	logger.start();
+	        thread = new Thread() {
 	        	@Override
 	        	public void run() {
-	        		
-	        		logger.start();
 	    	        try {
 	    	            ServerSocket server = new ServerSocket(listenPort);
 	    	            int counter = 0;
 	    	            while (true) {
-	    	                Socket conn = server.accept();
-	    	                Tracer tracer = tracerConstructor.newInstance(
-	    	                		conn
-	    	                          , "Tracer-" + (counter++)
-	    	                          , connectHost, connectPort
-	    	                          , logger
-	    	                          );
-	    	                tracerThread = new Thread(tracer);
-	    	                tracerThread.start();
+	    	            	socket = server.accept();
+	    	            	String id = "Tracer-" + (counter++);
+	    	                Tracer tracer = createTracer(socket, id);
+	    	                LOG.info("starting " + id);
+	    	                new Thread(tracer).start();
 	    	            }
 	    	        } catch (Exception e) {
-	    	            logger.stop(); // will stop shared logger thread
 	    	            e.printStackTrace();
-	    	        }
-	        		
-	        	}
-	        	
-	        	@Override
-	        	public void interrupt() {
-	        		tracerThread.interrupt();
-	        		logger.stop(); // will stop shared logger thread
-	        		super.interrupt();
+	    	        }	        		
 	        	}
 	        };
+			thread.start();
+		}
+		
+		void shutdown() {
+            logger.stop();
+			thread.interrupt();
 		}
 	}
 	
-
 }
