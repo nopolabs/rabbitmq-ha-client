@@ -5,6 +5,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import net.joshdevins.rabbitmq.client.ha.HaConnectionFactory;
 import net.joshdevins.rabbitmq.client.ha.retry.AlwaysRetryStrategy;
@@ -14,9 +16,14 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.rabbitmq.client.AMQP.BasicProperties;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Consumer;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.ShutdownSignalException;
 import com.rabbitmq.tools.Tracer;
 
 public class IntegrationTest {
@@ -34,6 +41,7 @@ public class IntegrationTest {
 	private TracerServer tracerServer;
 	private HaConnectionFactory haFactory;
 	private ConnectionFactory factory;
+	private ExecutorService executor;
 	
 	@Test
 	public void publisherTest() throws IOException {
@@ -52,23 +60,77 @@ public class IntegrationTest {
 		connection.close();
 	}
 	
-//	@Test
-//	public void consumerTest() {
-//		
-//	}
-//	
-//	@Test
-//	public void publisherClusterTest() {
-//
-//	}
-//	
-//	@Test
-//	public void consumerClusterTest() {
-//		
-//	}
+	abstract class Client implements Runnable {
+	    private Connection connection;
+	    protected Channel channel;
+
+	    Client() throws IOException {
+            open();
+	    }
+	    
+	    abstract void work() throws IOException;
+	    
+        public void run() {
+            try {
+                 work();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        
+        private void open() throws IOException {
+            connection = factory.newConnection();
+            channel = connection.createChannel();
+        }
+        
+        private void close() throws IOException {
+            channel.close();
+            connection.close();
+        }
+	    
+	}
 	
+    abstract class TestPublisher extends Client {
+        private String exchangeName;
+        private String routingKey;
+        
+        TestPublisher(String exchangeName, String routingKey) throws IOException {
+            this.exchangeName = exchangeName;
+            this.routingKey = routingKey;
+        }
+        
+        void send(byte[] msgBytes) throws IOException {
+            channel.basicPublish(exchangeName, routingKey, null, msgBytes);
+        }
+    }
+        
+    abstract class TestConsumer extends Client {
+         
+        TestConsumer(String queueName) throws IOException {
+            channel.basicConsume(queueName, new DefaultConsumer(channel) {
+                @Override
+                public void handleDelivery(String consumerTag, Envelope envelope, BasicProperties properties, byte[] msgBytes) throws IOException {
+                    receive(msgBytes);
+                }
+            });
+        }
+        
+        boolean receive(byte[] msgBytes) throws IOException {
+            return true;
+        }
+    }
+        
 	@Before 
 	public void setup() throws IOException, ClassNotFoundException {
+	    
+	    executor = Executors.newFixedThreadPool(10);
+	    
 		tracerServer = new TracerServer(TRACER_PORT, AMQP_HOST, AMQP_PORT);
 		tracerServer.startup();
 		
@@ -157,8 +219,6 @@ public class IntegrationTest {
 			Thread thread = new Thread(tracer);
 			thread.start();
             LOG.info(id + " started");
-//            thread.join();
-            LOG.info(id + " finished");
 		}
 		
 		void breakConnection() {
