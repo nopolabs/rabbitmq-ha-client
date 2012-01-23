@@ -6,6 +6,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -17,9 +18,11 @@ import net.joshdevins.rabbitmq.client.ha.retry.SimpleRetryStrategy;
 import org.apache.log4j.Logger;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.rabbitmq.client.AMQP.BasicProperties;
+import com.rabbitmq.client.Address;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
@@ -31,8 +34,9 @@ public class IntegrationTest {
 	
     private static final Logger LOG = Logger.getLogger(IntegrationTest.class);
 
-    private static final int PUBLISH_PORT = 5673;
-    private static final int CONSUME_PORT = 5674;
+    private static final int FIRST_PROXY_PORT = 5673;
+    private static final int LAST_PROXY_PORT = FIRST_PROXY_PORT + 4;
+    
 	private static final String AMQP_HOST = ConnectionFactory.DEFAULT_HOST;
 	private static final int AMQP_PORT = ConnectionFactory.DEFAULT_AMQP_PORT;
 	
@@ -40,44 +44,85 @@ public class IntegrationTest {
 	private static final String TEST_QUEUE = "TEST-queue";
 	private static final String TEST_ROUTING_KEY = "TEST-routingKey";
 	
-	private TracerProxy publishProxy;
-	private TracerProxy consumeProxy;
+    private TracerProxy[] proxies;
+    private Address[] proxyAddresses;
 	
-	private ConnectionFactory publishFactory;
-	private ConnectionFactory consumeFactory;
+	private ConnectionFactory factory;
 	
-	private ExecutorService executor;
-	
+	private ExecutorService executor;	
+    
+    @Before 
+    public void setup() throws IOException, ClassNotFoundException {
+        
+        executor = Executors.newFixedThreadPool(10);
+        
+        List<TracerProxy> proxyList = new LinkedList<TracerProxy>();
+        List<Address> addressList = new LinkedList<Address>();
+        
+        for (int port = FIRST_PROXY_PORT; port <= LAST_PROXY_PORT; port++) {
+            proxyList.add(new TracerProxy("proxy-" + port, port, AMQP_HOST, AMQP_PORT));
+            addressList.add(new Address("localhost", port));
+        }
+        proxies = proxyList.toArray(new TracerProxy[0]);
+        proxyAddresses = addressList.toArray(new Address[0]);
+        
+        for (TracerProxy proxy : proxyList) {
+            executor.execute(proxy);
+        }
+        
+        factory = createConnectionFactory(proxyAddresses);
+        
+        teardownQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
+        setupQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
+    }
+    
+    ConnectionFactory createConnectionFactory(Address[] addresses) {
+        HaConnectionFactory factory = new HaConnectionFactory();
+        factory.setHost(addresses[0].getHost());
+        factory.setPort(addresses[0].getPort());
+        factory.setRetryStrategy(new SimpleRetryStrategy());
+        return factory;
+    }
+    
+    @After
+    public void teardown() throws IOException, InterruptedException {
+        Thread.sleep(500);
+    }
+    
+    Connection newHaConnection() throws IOException {
+        return factory.newConnection(proxyAddresses);
+    }
+    
 	@Test
 	public void publisherTest() throws IOException {
 		
-		PublishingClient p = new PublishingClient(publishFactory.newConnection(), TEST_EXCHANGE, TEST_ROUTING_KEY) {
+		PublishingClient p = new PublishingClient(newHaConnection(), TEST_EXCHANGE, TEST_ROUTING_KEY) {
 			@Override
 			void work() throws IOException {
-				for (int i = 0; i < 100000; i++) {
+				for (int i = 0; i < 10; i++) {
 					send(("msg-" + i).getBytes());
+					try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+					if ((i % 2) == 0) {
+					    System.out.println(i + " sent");
+					    proxies[i / 2].shutdown();
+					}
 				}
-				System.out.println("DONE");
 			}			
 		};
 		
 		executor.execute(p);
 		
-		try {
-			Thread.sleep(100);
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		}
-		publishProxy.shutdown();
-		executor.execute(publishProxy);		
-		
         while (!executor.isTerminated()) {} // wait for all jobs to complete
 	}
 	
-	@Test
+	@Ignore @Test
 	public void consumerTest() throws IOException {
 		
-		ConsumingClient c = new ConsumingClient(consumeFactory.newConnection(), TEST_QUEUE) {
+		ConsumingClient c = new ConsumingClient(newHaConnection(), TEST_QUEUE) {
 			
 			List<String> rcvd = Collections.synchronizedList(new ArrayList<String>());
 			
@@ -100,40 +145,6 @@ public class IntegrationTest {
 		};
 		
 		executor.execute(c);
-	}
-	
-	@Before 
-	public void setup() throws IOException, ClassNotFoundException {
-	    
-		executor = Executors.newFixedThreadPool(10);
-	    
-		publishProxy = new TracerProxy("P", PUBLISH_PORT, AMQP_HOST, AMQP_PORT);
-		executor.execute(publishProxy);
-		
-		consumeProxy = new TracerProxy("C", CONSUME_PORT, AMQP_HOST, AMQP_PORT);
-		executor.execute(consumeProxy);
-		
-		publishFactory = createConnectionFactory("localhost", PUBLISH_PORT);
-		consumeFactory = createConnectionFactory("localhost", CONSUME_PORT);
-		
-		teardownQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
-		setupQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
-	}
-	
-	ConnectionFactory createConnectionFactory(String connectHost, int connectPort) {
-		HaConnectionFactory factory = new HaConnectionFactory();
-		factory.setHost(connectHost);
-		factory.setPort(connectPort);
-		factory.setRetryStrategy(new SimpleRetryStrategy());
-		return factory;
-	}
-	
-	@After
-	public void teardown() throws IOException, InterruptedException {
-		Thread.sleep(500);
-		publishProxy.shutdown();
-		consumeProxy.shutdown();
-		Thread.sleep(500);
 	}
 	
 	private void setupQueue(String exchangeName, String queueName, String routingKey) throws IOException {
@@ -199,6 +210,14 @@ public class IntegrationTest {
 			}
 			throw new RuntimeException("Could not find constructor: Tracer(Socket sock, String id, String host, int port, Logger logger)");
 		}
+		
+		String getHost() {
+		    return connectHost;
+		}
+		
+		int getPort() {
+		    return connectPort;
+		}
 
 		public void run() {
 			logger = new Tracer.AsyncLogger(System.out);
@@ -223,6 +242,7 @@ public class IntegrationTest {
 		}
 		
 		void shutdown() {
+		    System.out.println("CLOSE: " + this.id);
 			logger.stop();
 			try {
 				serverSocket.close();
