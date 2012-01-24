@@ -35,7 +35,7 @@ public class IntegrationTest {
     private static final Logger LOG = Logger.getLogger(IntegrationTest.class);
 
     private static final int FIRST_PROXY_PORT = 5673;
-    private static final int LAST_PROXY_PORT = FIRST_PROXY_PORT + 4;
+    private static final int LAST_PROXY_PORT = FIRST_PROXY_PORT + 1;
     
 	private static final String AMQP_HOST = ConnectionFactory.DEFAULT_HOST;
 	private static final int AMQP_PORT = ConnectionFactory.DEFAULT_AMQP_PORT;
@@ -56,20 +56,13 @@ public class IntegrationTest {
         
         executor = Executors.newFixedThreadPool(10);
         
-        List<TracerProxy> proxyList = new LinkedList<TracerProxy>();
         List<Address> addressList = new LinkedList<Address>();
         
         for (int port = FIRST_PROXY_PORT; port <= LAST_PROXY_PORT; port++) {
-            proxyList.add(new TracerProxy("proxy-" + port, port, AMQP_HOST, AMQP_PORT));
             addressList.add(new Address("localhost", port));
         }
-        proxies = proxyList.toArray(new TracerProxy[0]);
         proxyAddresses = addressList.toArray(new Address[0]);
-        
-        for (TracerProxy proxy : proxyList) {
-            executor.execute(proxy);
-        }
-        
+                
         factory = createConnectionFactory(proxyAddresses);
         
         teardownQueue(TEST_EXCHANGE, TEST_QUEUE, TEST_ROUTING_KEY);
@@ -86,7 +79,6 @@ public class IntegrationTest {
     
     @After
     public void teardown() throws IOException, InterruptedException {
-        Thread.sleep(500);
     }
     
     Connection newHaConnection() throws IOException {
@@ -94,7 +86,7 @@ public class IntegrationTest {
     }
     
 	@Test
-	public void publisherTest() throws IOException {
+	public void manualPublisherTest() throws IOException {
 		
 		PublishingClient p = new PublishingClient(newHaConnection(), TEST_EXCHANGE, TEST_ROUTING_KEY) {
 			@Override
@@ -106,10 +98,6 @@ public class IntegrationTest {
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
-					if ((i % 2) == 0) {
-					    System.out.println(i + " sent");
-					    proxies[i / 2].shutdown();
-					}
 				}
 			}			
 		};
@@ -120,7 +108,7 @@ public class IntegrationTest {
 	}
 	
 	@Ignore @Test
-	public void consumerTest() throws IOException {
+	public void manualConsumerTest() throws IOException {
 		
 		ConsumingClient c = new ConsumingClient(newHaConnection(), TEST_QUEUE) {
 			
